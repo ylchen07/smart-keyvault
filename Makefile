@@ -4,14 +4,19 @@
 BINARY=smart-keyvault
 BUILD_DIR=bin
 
+# Local cache directories
+CACHE_DIR=$(CURDIR)/.cache
+GOMODCACHE=$(CACHE_DIR)/go-mod
+GOCACHE=$(CACHE_DIR)/go-build
+
 # Go parameters
 GOCMD=go
-GOBUILD=$(GOCMD) build
+GOBUILD=GOMODCACHE=$(GOMODCACHE) GOCACHE=$(GOCACHE) $(GOCMD) build
 GOCLEAN=$(GOCMD) clean
-GOTEST=$(GOCMD) test
-GOGET=$(GOCMD) get
+GOTEST=GOMODCACHE=$(GOMODCACHE) GOCACHE=$(GOCACHE) $(GOCMD) test
+GOGET=GOMODCACHE=$(GOMODCACHE) GOCACHE=$(GOCACHE) $(GOCMD) get
 GOFMT=$(GOCMD) fmt
-GOVET=$(GOCMD) vet
+GOVET=GOMODCACHE=$(GOMODCACHE) GOCACHE=$(GOCACHE) $(GOCMD) vet
 
 # Build the project
 build:
@@ -37,6 +42,7 @@ clean:
 	@echo "Cleaning..."
 	$(GOCLEAN)
 	rm -rf $(BUILD_DIR)
+	rm -rf $(CACHE_DIR)
 	@echo "Clean complete"
 
 # Run tests

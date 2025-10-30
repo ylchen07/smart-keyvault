@@ -7,6 +7,9 @@ bin/
 *.dylib
 smart-keyvault
 
+# Local cache directories
+.cache/
+
 # Test binary, built with `go test -c`
 *.test
 
