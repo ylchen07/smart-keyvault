@@ -79,10 +79,15 @@ No need to remember complex commands or vault names anymore!
 
 ### For Azure KeyVault Provider
 - Azure CLI (`az`) installed and authenticated (`az login`)
+- Access to Azure subscription with KeyVaults
 
 ### For Hashicorp Vault Provider
 - Vault server accessible
-- `VAULT_ADDR` and `VAULT_TOKEN` environment variables set (or configured)
+- Environment variables configured:
+  - `VAULT_ADDR`: Vault server address (e.g., `https://vault.example.com:8200`) - **Required**
+  - `VAULT_TOKEN`: Authentication token for Vault - **Required**
+  - `VAULT_NAMESPACE`: Vault namespace (e.g., `admin/production`) - **Required for Vault Enterprise**
+- Only KV v2 (Key-Value version 2) secret engines are supported
 
 ### Common Requirements
 - fzf installed
@@ -206,17 +211,45 @@ smart-keyvault list-vaults --provider hashicorp
 
 # List secrets in a vault (one per line)
 smart-keyvault list-secrets --provider azure --vault my-prod-vault
+smart-keyvault list-secrets --provider hashicorp --vault secret
 
 # Get secret value (outputs to stdout)
 smart-keyvault get-secret --provider azure --vault my-vault --name my-secret
+smart-keyvault get-secret --provider hashicorp --vault secret --name database/password
 
 # Get secret and copy to clipboard directly
 smart-keyvault get-secret --provider azure --vault my-vault --name my-secret --copy
+smart-keyvault get-secret --provider hashicorp --vault secret --name api-key --copy
 
 # JSON output (for scripting/parsing)
 smart-keyvault list-vaults --provider azure --format json
-smart-keyvault list-secrets --provider azure --vault my-vault --format json
+smart-keyvault list-secrets --provider hashicorp --vault secret --format json
 ```
+
+### HashiCorp Vault Setup Example
+
+```bash
+# Set environment variables for Vault Enterprise
+export VAULT_ADDR='https://vault.example.com:8200'
+export VAULT_TOKEN='s.xxxxxxxxxxxxxxxxxxxxxxxx'
+export VAULT_NAMESPACE='admin/production'  # Required for Vault Enterprise
+
+# Or for local development with Vault dev server (open source)
+export VAULT_ADDR='http://127.0.0.1:8200'
+export VAULT_TOKEN='root'
+# VAULT_NAMESPACE is not needed for Vault OSS
+
+# List KV v2 mounts (vaults)
+smart-keyvault list-vaults --provider hashicorp
+
+# List secrets in a mount
+smart-keyvault list-secrets --provider hashicorp --vault secret
+
+# Get a secret value
+smart-keyvault get-secret --provider hashicorp --vault secret --name my-app/api-key
+```
+
+**Note**: For HashiCorp Vault, the binary only supports KV v2 (Key-Value version 2) secret engines. When retrieving secrets, if the secret contains multiple key-value pairs, it will return the value with key "value" or "password", or the first value found.
 
 ## Development
 
