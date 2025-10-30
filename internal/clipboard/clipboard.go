@@ -1,14 +1,17 @@
 package clipboard
 
 import (
+	"context"
 	"fmt"
 
-	"github.com/atotto/clipboard"
+	"github.com/gopasspw/clipboard"
 )
 
-// Copy copies text to the system clipboard
+// Copy copies a password/secret to the system clipboard
+// Uses WritePassword which may provide additional security features
 func Copy(text string) error {
-	if err := clipboard.WriteAll(text); err != nil {
+	ctx := context.Background()
+	if err := clipboard.WritePassword(ctx, []byte(text)); err != nil {
 		return fmt.Errorf("failed to copy to clipboard: %w", err)
 	}
 	return nil
@@ -16,7 +19,8 @@ func Copy(text string) error {
 
 // Read reads text from the system clipboard
 func Read() (string, error) {
-	text, err := clipboard.ReadAll()
+	ctx := context.Background()
+	text, err := clipboard.ReadAllString(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to read from clipboard: %w", err)
 	}
@@ -25,7 +29,6 @@ func Read() (string, error) {
 
 // IsAvailable checks if clipboard functionality is available
 func IsAvailable() bool {
-	// Try to read from clipboard as a test
-	_, err := clipboard.ReadAll()
-	return err == nil
+	// Check if clipboard is supported on this platform
+	return !clipboard.IsUnsupported()
 }
