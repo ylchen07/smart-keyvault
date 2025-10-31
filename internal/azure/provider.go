@@ -2,8 +2,8 @@ package azure
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"os"
 
 	"github.com/ylchen07/smart-keyvault/internal/provider"
 	"github.com/ylchen07/smart-keyvault/pkg/models"
@@ -15,9 +15,38 @@ type Provider struct {
 }
 
 // NewProvider creates a new Azure KeyVault provider
+// Configuration options:
+//   - "subscription_id" (string): Azure subscription ID
+//
+// If subscription_id is not provided in config, it will attempt to read from:
+//   - AZURE_SUBSCRIPTION_ID environment variable
+//   - Default Azure CLI subscription (via `az account show`)
 func NewProvider(cfg *provider.Config) (provider.Provider, error) {
+	subscriptionID := ""
+
+	// Try to get subscription ID from config
+	if cfg != nil && cfg.Settings != nil {
+		if v, ok := cfg.Settings["subscription_id"].(string); ok {
+			subscriptionID = v
+		}
+	}
+
+	// Fallback to environment variable
+	if subscriptionID == "" {
+		subscriptionID = os.Getenv("AZURE_SUBSCRIPTION_ID")
+	}
+
+	if subscriptionID == "" {
+		return nil, fmt.Errorf("subscription_id is required for Azure provider (set via config or AZURE_SUBSCRIPTION_ID env var)")
+	}
+
+	client, err := NewClient(subscriptionID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Azure client: %w", err)
+	}
+
 	return &Provider{
-		client: NewClient(),
+		client: client,
 	}, nil
 }
 
@@ -28,101 +57,17 @@ func (p *Provider) Name() string {
 
 // ListVaults returns all accessible Azure Key Vaults
 func (p *Provider) ListVaults(ctx context.Context) ([]*models.Vault, error) {
-	output, err := p.client.Execute(ctx, "keyvault", "list", "--output", "json")
-	if err != nil {
-		return nil, fmt.Errorf("failed to list vaults: %w", err)
-	}
-
-	// Parse Azure response
-	var azVaults []struct {
-		Name          string `json:"name"`
-		Location      string `json:"location"`
-		ResourceGroup string `json:"resourceGroup"`
-	}
-
-	if err := json.Unmarshal(output, &azVaults); err != nil {
-		return nil, fmt.Errorf("failed to parse vault list: %w", err)
-	}
-
-	// Convert to common models
-	vaults := make([]*models.Vault, len(azVaults))
-	for i, v := range azVaults {
-		vaults[i] = &models.Vault{
-			Name:     v.Name,
-			Provider: "azure",
-			Metadata: map[string]string{
-				"location":      v.Location,
-				"resourceGroup": v.ResourceGroup,
-			},
-		}
-	}
-
-	return vaults, nil
+	return p.client.ListVaults(ctx)
 }
 
 // ListSecrets returns all secrets in a specific vault
 func (p *Provider) ListSecrets(ctx context.Context, vaultName string) ([]*models.Secret, error) {
-	output, err := p.client.Execute(ctx, "keyvault", "secret", "list",
-		"--vault-name", vaultName,
-		"--output", "json")
-	if err != nil {
-		return nil, fmt.Errorf("failed to list secrets: %w", err)
-	}
-
-	// Parse Azure response
-	var azSecrets []struct {
-		Name       string `json:"name"`
-		Attributes struct {
-			Enabled bool `json:"enabled"`
-		} `json:"attributes"`
-	}
-
-	if err := json.Unmarshal(output, &azSecrets); err != nil {
-		return nil, fmt.Errorf("failed to parse secret list: %w", err)
-	}
-
-	// Convert to common models, filter only enabled secrets
-	secrets := make([]*models.Secret, 0)
-	for _, s := range azSecrets {
-		if s.Attributes.Enabled {
-			secrets = append(secrets, &models.Secret{
-				Name:      s.Name,
-				VaultName: vaultName,
-				Provider:  "azure",
-				Enabled:   true,
-			})
-		}
-	}
-
-	return secrets, nil
+	return p.client.ListSecrets(ctx, vaultName)
 }
 
 // GetSecret retrieves a specific secret value
 func (p *Provider) GetSecret(ctx context.Context, vaultName, secretName string) (*models.SecretValue, error) {
-	output, err := p.client.Execute(ctx, "keyvault", "secret", "show",
-		"--vault-name", vaultName,
-		"--name", secretName,
-		"--output", "json")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get secret: %w", err)
-	}
-
-	// Parse Azure response
-	var azSecret struct {
-		Name  string `json:"name"`
-		Value string `json:"value"`
-	}
-
-	if err := json.Unmarshal(output, &azSecret); err != nil {
-		return nil, fmt.Errorf("failed to parse secret: %w", err)
-	}
-
-	return &models.SecretValue{
-		Name:      azSecret.Name,
-		Value:     azSecret.Value,
-		VaultName: vaultName,
-		Provider:  "azure",
-	}, nil
+	return p.client.GetSecret(ctx, vaultName, secretName)
 }
 
 // SupportsFeature checks if the provider supports a specific feature
