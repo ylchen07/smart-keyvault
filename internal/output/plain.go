@@ -50,3 +50,20 @@ func (f *PlainFormatter) FormatProviders(providers []string) (string, error) {
 
 	return strings.Join(providers, "\n"), nil
 }
+
+// FormatWalkSecrets formats all secrets in plain text format
+// Format: vault:secret_name=secret_value (one per line)
+func (f *PlainFormatter) FormatWalkSecrets(secretsByVault map[string][]*models.SecretValue) (string, error) {
+	if len(secretsByVault) == 0 {
+		return "", nil
+	}
+
+	var lines []string
+	for vaultName, secrets := range secretsByVault {
+		for _, secret := range secrets {
+			lines = append(lines, vaultName+":"+secret.Name+"="+secret.Value)
+		}
+	}
+
+	return strings.Join(lines, "\n"), nil
+}

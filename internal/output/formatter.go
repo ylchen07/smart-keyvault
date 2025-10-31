@@ -19,4 +19,5 @@ type Formatter interface {
 	FormatVaults(vaults []*models.Vault) (string, error)
 	FormatSecrets(secrets []*models.Secret) (string, error)
 	FormatProviders(providers []string) (string, error)
+	FormatWalkSecrets(secretsByVault map[string][]*models.SecretValue) (string, error)
 }

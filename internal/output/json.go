@@ -40,3 +40,12 @@ func (f *JSONFormatter) FormatProviders(providers []string) (string, error) {
 	}
 	return string(data), nil
 }
+
+// FormatWalkSecrets formats all secrets grouped by vault as JSON
+func (f *JSONFormatter) FormatWalkSecrets(secretsByVault map[string][]*models.SecretValue) (string, error) {
+	data, err := json.MarshalIndent(secretsByVault, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
