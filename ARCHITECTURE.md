@@ -55,34 +55,30 @@ The architecture is intentionally simple with clear separation: Go handles data,
 │  └──────┬───────┘                                      │
 │         │                                               │
 │  ┌──────▼────────────────────────────────────┐         │
-│  │    Azure KeyVault Wrapper                 │         │
-│  │  ┌────────────┐      ┌─────────────┐     │         │
-│  │  │  Vault     │      │   Secret    │     │         │
-│  │  │  Service   │      │   Service   │     │         │
-│  │  └─────┬──────┘      └──────┬──────┘     │         │
-│  │        │                    │            │         │
-│  │        └──────────┬─────────┘            │         │
-│  │                   │                      │         │
-│  │        ┌──────────▼────────┐             │         │
-│  │        │   Azure Client    │             │         │
-│  │        │  (az CLI wrapper) │             │         │
-│  │        └──────────┬────────┘             │         │
-│  └───────────────────┼──────────────────────┘         │
-│                      │                                 │
-│  ┌───────────────────▼──────────────────────┐         │
-│  │    Output Formatters                     │         │
-│  │  - Plain text (for fzf)                  │         │
-│  │  - JSON (for scripting)                  │         │
-│  └──────────────────────────────────────────┘         │
-└─────────────────────┬───────────────────────────────────┘
+│  │    Azure Provider                        │         │
+│  │  ┌────────────────────────────────────┐  │         │
+│  │  │   Azure Client (SDK-based)         │  │         │
+│  │  │  - DefaultAzureCredential          │  │         │
+│  │  │  - VaultsClient (list vaults)      │  │         │
+│  │  │  - SecretsClient (per-vault cache) │  │         │
+│  │  └────────────┬───────────────────────┘  │         │
+│  └───────────────┼──────────────────────────┘         │
+│                  │                                      │
+│  ┌───────────────▼──────────────────────┐              │
+│  │    Output Formatters                 │              │
+│  │  - Plain text (for fzf)              │              │
+│  │  - JSON (for scripting)              │              │
+│  │  - Walk secrets (grouped by vault)   │              │
+│  └──────────────────────────────────────┘              │
+└─────────────────────┬────────────────────────────────────┘
                       │
                       ▼
-┌─────────────────────────────────────────────────────────┐
-│              Azure CLI (az keyvault)                    │
-│  - az keyvault list                                     │
-│  - az keyvault secret list --vault-name <name>          │
-│  - az keyvault secret show --vault-name <> --name <>    │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│              Azure SDK for Go                            │
+│  - azidentity.DefaultAzureCredential                     │
+│  - armkeyvault.VaultsClient (management plane)           │
+│  - azsecrets.Client (data plane, per vault)              │
+└──────────────────────────────────────────────────────────┘
 ```
 
 ## Component Details
@@ -134,64 +130,81 @@ smart-keyvault get-secret --vault X --name Y   # Output: secret value only
 smart-keyvault get-secret --vault X --name Y --format json  # JSON output
 ```
 
-### 3. Azure Wrapper (internal/azure)
+### 3. Azure Provider (internal/azure)
 
-**Responsibility**: Execute Azure CLI commands and parse JSON responses
+**Responsibility**: Interact with Azure Key Vault using Azure SDK for Go
 
 **Files**:
-- `client.go`: Execute `az` CLI commands
-- `vault.go`: Vault operations
-- `secret.go`: Secret operations
+- `provider.go`: Implements Provider interface
+- `client.go`: Azure SDK client wrapper with authentication and caching
 
-**Key Interfaces**:
+**Key Implementation**:
 
 ```go
-// Client executes az CLI commands
+// Client implements Azure Key Vault operations using Azure SDK
 type Client struct {
-    timeout time.Duration
+    credential     *azidentity.DefaultAzureCredential
+    subscriptionID string
+    vaultsClient   *armkeyvault.VaultsClient
+    secretClients  map[string]*azsecrets.Client // cached per vault
+    mu             sync.RWMutex                 // protects secretClients map
 }
 
-func (c *Client) Execute(args ...string) ([]byte, error) {
-    cmd := exec.Command("az", args...)
-    output, err := cmd.CombinedOutput()
+func NewClient(subscriptionID string) (*Client, error) {
+    // Use DefaultAzureCredential - supports:
+    // - Azure CLI (az login)
+    // - Managed Identity
+    // - Environment variables
+    // - Service Principal
+    cred, err := azidentity.NewDefaultAzureCredential(nil)
     if err != nil {
-        return nil, fmt.Errorf("az command failed: %w", err)
+        return nil, err
     }
-    return output, nil
+
+    vaultsClient, err := armkeyvault.NewVaultsClient(subscriptionID, cred, nil)
+    if err != nil {
+        return nil, err
+    }
+
+    return &Client{
+        credential:     cred,
+        subscriptionID: subscriptionID,
+        vaultsClient:   vaultsClient,
+        secretClients:  make(map[string]*azsecrets.Client),
+    }, nil
 }
 
-// VaultService handles vault operations
-type VaultService struct {
-    client *Client
+func (c *Client) ListVaults(ctx context.Context) ([]*models.Vault, error) {
+    // Use SDK pager for pagination
+    pager := c.vaultsClient.NewListBySubscriptionPager(nil)
+    // Iterate through pages and collect vaults
 }
 
-func (v *VaultService) ListVaults() ([]models.Vault, error) {
-    // Execute: az keyvault list --output json
-    // Parse JSON
-    // Return []Vault
+func (c *Client) ListSecrets(ctx context.Context, vaultName string) ([]*models.Secret, error) {
+    client, _ := c.getSecretsClient(vaultName) // Cached
+    pager := client.NewListSecretPropertiesPager(nil)
+    // Iterate through pages, filter enabled secrets
 }
 
-// SecretService handles secret operations
-type SecretService struct {
-    client *Client
-}
-
-func (s *SecretService) ListSecrets(vaultName string) ([]models.Secret, error) {
-    // Execute: az keyvault secret list --vault-name X --output json
-}
-
-func (s *SecretService) GetSecret(vaultName, name string) (string, error) {
-    // Execute: az keyvault secret show --vault-name X --name Y --output json
-    // Parse and return secret.value
+func (c *Client) GetSecret(ctx context.Context, vaultName, secretName string) (*models.SecretValue, error) {
+    client, _ := c.getSecretsClient(vaultName)
+    resp, _ := client.GetSecret(ctx, secretName, "", nil) // Empty version = latest
+    return &models.SecretValue{Value: *resp.Value}, nil
 }
 ```
 
 **Data Flow**:
-1. Receive operation request (e.g., ListSecrets("my-vault"))
-2. Build `az keyvault` command arguments
-3. Execute via `exec.Command("az", ...)`
-4. Parse JSON output from stdout
-5. Return structured Go data
+1. Authenticate using DefaultAzureCredential
+2. Create management client (VaultsClient) and data clients (SecretsClient per vault)
+3. Use SDK pagination for listing operations
+4. Cache SecretsClient instances per vault for performance
+5. Return structured Go data models
+
+**Key Benefits over CLI**:
+- No process spawning (faster)
+- Native Go types and error handling
+- Connection pooling and reuse
+- Thread-safe client caching
 
 ### 4. Output Formatters (internal/output)
 
@@ -200,32 +213,50 @@ func (s *SecretService) GetSecret(vaultName, name string) (string, error) {
 **Files**:
 - `plain.go`: Plain text output (for fzf)
 - `json.go`: JSON output (for scripting)
+- `formatter.go`: Formatter interface
 
 **Implementation**:
 
 ```go
 package output
 
+// Formatter interface
+type Formatter interface {
+    FormatVaults(vaults []*models.Vault) (string, error)
+    FormatSecrets(secrets []*models.Secret) (string, error)
+    FormatProviders(providers []string) (string, error)
+    FormatWalkSecrets(secretsByVault map[string][]*models.SecretValue) (string, error)
+}
+
 // Plain text formatter - one item per line
-func FormatVaultsPlain(vaults []models.Vault) string {
+func (f *PlainFormatter) FormatVaultsPlain(vaults []*models.Vault) (string, error) {
     var lines []string
     for _, v := range vaults {
         lines = append(lines, v.Name)
     }
-    return strings.Join(lines, "\n")
+    return strings.Join(lines, "\n"), nil
 }
 
-func FormatSecretsPlain(secrets []models.Secret) string {
+func (f *PlainFormatter) FormatWalkSecrets(secretsByVault map[string][]*models.SecretValue) (string, error) {
+    // Format: vault:secret_name=secret_value
     var lines []string
-    for _, s := range secrets {
-        lines = append(lines, s.Name)
+    for vaultName, secrets := range secretsByVault {
+        for _, secret := range secrets {
+            lines = append(lines, vaultName+":"+secret.Name+"="+secret.Value)
+        }
     }
-    return strings.Join(lines, "\n")
+    return strings.Join(lines, "\n"), nil
 }
 
 // JSON formatter - for scripting/parsing
-func FormatVaultsJSON(vaults []models.Vault) (string, error) {
+func (f *JSONFormatter) FormatVaultsJSON(vaults []*models.Vault) (string, error) {
     data, err := json.MarshalIndent(vaults, "", "  ")
+    return string(data), err
+}
+
+func (f *JSONFormatter) FormatWalkSecrets(secretsByVault map[string][]*models.SecretValue) (string, error) {
+    // Groups secrets by vault: {"vault1": [...], "vault2": [...]}
+    data, err := json.MarshalIndent(secretsByVault, "", "  ")
     return string(data), err
 }
 ```
@@ -562,8 +593,15 @@ package azure
 
 import (
     "context"
-    "encoding/json"
-    "os/exec"
+    "fmt"
+    "os"
+    "strings"
+    "sync"
+
+    "github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+    "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/keyvault/armkeyvault"
+    "github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets"
+
     "github.com/yourusername/smart-keyvault/pkg/models"
     "github.com/yourusername/smart-keyvault/internal/provider"
 )
@@ -572,102 +610,169 @@ type Provider struct {
     client *Client
 }
 
-func NewProvider(cfg *provider.Config) (*Provider, error) {
-    return &Provider{
-        client: NewClient(),
-    }, nil
+type Client struct {
+    credential     *azidentity.DefaultAzureCredential
+    subscriptionID string
+    vaultsClient   *armkeyvault.VaultsClient
+    secretClients  map[string]*azsecrets.Client
+    mu             sync.RWMutex
 }
 
-func (p *Provider) Name() string {
-    return "azure"
-}
+func NewProvider(cfg *provider.Config) (provider.Provider, error) {
+    subscriptionID := ""
 
-func (p *Provider) ListVaults(ctx context.Context) ([]*models.Vault, error) {
-    output, err := p.client.Execute(ctx, "keyvault", "list", "--output", "json")
+    // Try config first, then environment variable
+    if cfg != nil && cfg.Settings != nil {
+        if v, ok := cfg.Settings["subscription_id"].(string); ok {
+            subscriptionID = v
+        }
+    }
+    if subscriptionID == "" {
+        subscriptionID = os.Getenv("AZURE_SUBSCRIPTION_ID")
+    }
+
+    if subscriptionID == "" {
+        return nil, fmt.Errorf("subscription_id required (config or AZURE_SUBSCRIPTION_ID)")
+    }
+
+    client, err := NewClient(subscriptionID)
     if err != nil {
         return nil, err
     }
 
-    var azVaults []struct {
-        Name          string `json:"name"`
-        Location      string `json:"location"`
-        ResourceGroup string `json:"resourceGroup"`
-    }
+    return &Provider{client: client}, nil
+}
 
-    if err := json.Unmarshal(output, &azVaults); err != nil {
+func NewClient(subscriptionID string) (*Client, error) {
+    cred, err := azidentity.NewDefaultAzureCredential(nil)
+    if err != nil {
         return nil, err
     }
 
-    vaults := make([]*models.Vault, len(azVaults))
-    for i, v := range azVaults {
-        vaults[i] = &models.Vault{
-            Name:     v.Name,
-            Provider: "azure",
-            Metadata: map[string]string{
-                "location":      v.Location,
-                "resourceGroup": v.ResourceGroup,
-            },
-        }
+    vaultsClient, err := armkeyvault.NewVaultsClient(subscriptionID, cred, nil)
+    if err != nil {
+        return nil, err
     }
 
+    return &Client{
+        credential:     cred,
+        subscriptionID: subscriptionID,
+        vaultsClient:   vaultsClient,
+        secretClients:  make(map[string]*azsecrets.Client),
+    }, nil
+}
+
+func (p *Provider) ListVaults(ctx context.Context) ([]*models.Vault, error) {
+    pager := p.client.vaultsClient.NewListBySubscriptionPager(nil)
+
+    var vaults []*models.Vault
+    for pager.More() {
+        page, err := pager.NextPage(ctx)
+        if err != nil {
+            return nil, err
+        }
+
+        for _, vault := range page.Value {
+            if vault.Name != nil && vault.Location != nil && vault.ID != nil {
+                vaults = append(vaults, &models.Vault{
+                    Name:     *vault.Name,
+                    Provider: "azure",
+                    Metadata: map[string]string{
+                        "location":      *vault.Location,
+                        "resourceGroup": extractResourceGroup(*vault.ID),
+                    },
+                })
+            }
+        }
+    }
     return vaults, nil
 }
 
 func (p *Provider) ListSecrets(ctx context.Context, vaultName string) ([]*models.Secret, error) {
-    output, err := p.client.Execute(ctx, "keyvault", "secret", "list",
-        "--vault-name", vaultName,
-        "--output", "json")
+    client, err := p.client.getSecretsClient(vaultName)
     if err != nil {
         return nil, err
     }
 
-    var azSecrets []struct {
-        Name    string `json:"name"`
-        Enabled bool   `json:"attributes.enabled"`
-    }
+    pager := client.NewListSecretPropertiesPager(nil)
+    var secrets []*models.Secret
 
-    if err := json.Unmarshal(output, &azSecrets); err != nil {
-        return nil, err
-    }
+    for pager.More() {
+        page, err := pager.NextPage(ctx)
+        if err != nil {
+            return nil, err
+        }
 
-    secrets := make([]*models.Secret, 0)
-    for _, s := range azSecrets {
-        if s.Enabled {  // Filter only enabled secrets
-            secrets = append(secrets, &models.Secret{
-                Name:     s.Name,
-                VaultName: vaultName,
-                Provider: "azure",
-            })
+        for _, props := range page.Value {
+            if props.ID != nil {
+                enabled := true
+                if props.Attributes != nil && props.Attributes.Enabled != nil {
+                    enabled = *props.Attributes.Enabled
+                }
+
+                if enabled {
+                    secrets = append(secrets, &models.Secret{
+                        Name:      props.ID.Name(),
+                        VaultName: vaultName,
+                        Provider:  "azure",
+                        Enabled:   enabled,
+                    })
+                }
+            }
         }
     }
-
     return secrets, nil
 }
 
 func (p *Provider) GetSecret(ctx context.Context, vaultName, secretName string) (*models.SecretValue, error) {
-    output, err := p.client.Execute(ctx, "keyvault", "secret", "show",
-        "--vault-name", vaultName,
-        "--name", secretName,
-        "--output", "json")
+    client, err := p.client.getSecretsClient(vaultName)
     if err != nil {
         return nil, err
     }
 
-    var azSecret struct {
-        Name  string `json:"name"`
-        Value string `json:"value"`
-    }
-
-    if err := json.Unmarshal(output, &azSecret); err != nil {
+    resp, err := client.GetSecret(ctx, secretName, "", nil)
+    if err != nil {
         return nil, err
     }
 
     return &models.SecretValue{
-        Name:      azSecret.Name,
-        Value:     azSecret.Value,
+        Name:      secretName,
+        Value:     *resp.Value,
         VaultName: vaultName,
         Provider:  "azure",
     }, nil
+}
+
+func (c *Client) getSecretsClient(vaultName string) (*azsecrets.Client, error) {
+    c.mu.RLock()
+    client, exists := c.secretClients[vaultName]
+    c.mu.RUnlock()
+
+    if exists {
+        return client, nil
+    }
+
+    vaultURL := fmt.Sprintf("https://%s.vault.azure.net/", vaultName)
+    client, err := azsecrets.NewClient(vaultURL, c.credential, nil)
+    if err != nil {
+        return nil, err
+    }
+
+    c.mu.Lock()
+    c.secretClients[vaultName] = client
+    c.mu.Unlock()
+
+    return client, nil
+}
+
+func extractResourceGroup(resourceID string) string {
+    parts := strings.Split(resourceID, "/")
+    for i, part := range parts {
+        if strings.EqualFold(part, "resourceGroups") && i+1 < len(parts) {
+            return parts[i+1]
+        }
+    }
+    return ""
 }
 
 func (p *Provider) SupportsFeature(feature provider.Feature) bool {

@@ -7,7 +7,7 @@ A multi-provider tmux plugin for secret management that simplifies browsing and 
 Smart KeyVault is a tmux plugin that provides a unified interface for browsing and retrieving secrets from multiple secret management systems. It uses a Go binary with a provider architecture to fetch data and presents it through fzf-tmux for interactive selection.
 
 **Supported Providers:**
-- **Azure KeyVault** - via Azure CLI (`az keyvault`)
+- **Azure KeyVault** - via Azure SDK for Go
 - **Hashicorp Vault** - via Vault API client
 
 No need to remember complex commands or vault names anymore!
@@ -49,7 +49,7 @@ No need to remember complex commands or vault names anymore!
        │                │
        ▼                ▼
 ┌─────────────┐  ┌──────────────┐
-│  az CLI     │  │  Vault API   │
+│ Azure SDK   │  │  Vault API   │
 └─────────────┘  └──────────────┘
 ```
 
@@ -78,8 +78,9 @@ No need to remember complex commands or vault names anymore!
 ## Prerequisites
 
 ### For Azure KeyVault Provider
-- Azure CLI (`az`) installed and authenticated (`az login`)
+- Azure authentication configured (supports `az login`, managed identity, environment variables, or service principal)
 - Access to Azure subscription with KeyVaults
+- `AZURE_SUBSCRIPTION_ID` environment variable set (or provided via CLI flag)
 
 ### For Hashicorp Vault Provider
 - Vault server accessible
@@ -206,24 +207,30 @@ smart-keyvault list-providers
 # Output: azure, hashicorp
 
 # List vaults from a specific provider (one per line)
-smart-keyvault list-vaults --provider azure
+AZURE_SUBSCRIPTION_ID=xxx smart-keyvault list-vaults --provider azure
 smart-keyvault list-vaults --provider hashicorp
 
 # List secrets in a vault (one per line)
-smart-keyvault list-secrets --provider azure --vault my-prod-vault
+AZURE_SUBSCRIPTION_ID=xxx smart-keyvault list-secrets --provider azure --vault my-prod-vault
 smart-keyvault list-secrets --provider hashicorp --vault secret
 
 # Get secret value (outputs to stdout)
-smart-keyvault get-secret --provider azure --vault my-vault --name my-secret
+AZURE_SUBSCRIPTION_ID=xxx smart-keyvault get-secret --provider azure --vault my-vault --name my-secret
 smart-keyvault get-secret --provider hashicorp --vault secret --name database/password
 
 # Get secret and copy to clipboard directly
-smart-keyvault get-secret --provider azure --vault my-vault --name my-secret --copy
+AZURE_SUBSCRIPTION_ID=xxx smart-keyvault get-secret --provider azure --vault my-vault --name my-secret --copy
 smart-keyvault get-secret --provider hashicorp --vault secret --name api-key --copy
 
+# Walk through all secrets and retrieve their values (grouped by vault)
+AZURE_SUBSCRIPTION_ID=xxx smart-keyvault walk-secrets --provider azure
+AZURE_SUBSCRIPTION_ID=xxx smart-keyvault walk-secrets --provider azure --vault my-vault
+smart-keyvault walk-secrets --provider hashicorp --vault secret
+
 # JSON output (for scripting/parsing)
-smart-keyvault list-vaults --provider azure --format json
+AZURE_SUBSCRIPTION_ID=xxx smart-keyvault list-vaults --provider azure --format json
 smart-keyvault list-secrets --provider hashicorp --vault secret --format json
+AZURE_SUBSCRIPTION_ID=xxx smart-keyvault walk-secrets --provider azure --format json
 ```
 
 ### HashiCorp Vault Setup Example
