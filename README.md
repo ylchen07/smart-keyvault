@@ -153,20 +153,68 @@ Secret 'database-password' copied to clipboard!
 
 Optional configuration file: `~/.config/smart-keyvault/config.yaml`
 
-```yaml
-# Default vault (skip vault selection if set)
-default_vault: "my-prod-vault"
+See `config.example.yaml` for a complete example with all options.
 
-# fzf-tmux options
+```yaml
+# Default settings for quick access
+defaults:
+  provider: "azure"              # Default provider (azure, hashicorp)
+  vault: "my-prod-vault"         # Default vault name
+
+# Provider configurations
+providers:
+  # Azure KeyVault Provider
+  azure:
+    enabled: true
+    # List of Azure subscriptions
+    instances:
+      - name: "prod-subscription"
+        subscription_id: "xxx-xxx-xxx-prod"
+        default: true
+
+      - name: "dev-subscription"
+        subscription_id: "xxx-xxx-xxx-dev"
+
+      - name: "sandbox-subscription"
+        subscription_id: "${AZURE_SUBSCRIPTION_ID}"  # Can use env vars
+
+  # HashiCorp Vault Provider
+  hashicorp:
+    enabled: true
+    # List of Vault instances
+    instances:
+      - name: "prod-vault"
+        address: "https://vault-prod.example.com:8200"
+        token: "${VAULT_TOKEN_PROD}"      # Environment variable substitution
+        namespace: "admin/production"      # For Vault Enterprise
+        default: true
+
+      - name: "dev-vault"
+        address: "https://vault-dev.example.com:8200"
+        token: "${VAULT_TOKEN_DEV}"
+        namespace: "admin/dev"
+
+      - name: "local-vault"
+        address: "http://127.0.0.1:8200"
+        token: "${VAULT_TOKEN}"
+
+# fzf-tmux display options
 fzf:
   height: "40%"
   border: "rounded"
   preview: false
 
-# Filters
+# Filtering options
 filters:
   enabled_only: true  # Only show enabled secrets
 ```
+
+### Configuration Features
+
+- **Multi-instance support**: Configure multiple Azure subscriptions and Vault servers
+- **Environment variable substitution**: Use `${VAR_NAME}` syntax for sensitive data
+- **Default instances**: Mark instances as default to skip selection prompts
+- **Config precedence**: CLI flags > Environment variables > Config file > Defaults
 
 ## Project Structure
 
@@ -206,31 +254,42 @@ The binary provides simple commands that output data for fzf:
 smart-keyvault list-providers
 # Output: azure, hashicorp
 
-# List vaults from a specific provider (one per line)
-AZURE_SUBSCRIPTION_ID=xxx smart-keyvault list-vaults --provider azure
+# List vaults from a specific provider (uses default instance from config)
+smart-keyvault list-vaults --provider azure
 smart-keyvault list-vaults --provider hashicorp
 
+# List vaults from a specific instance
+smart-keyvault list-vaults --provider azure --instance prod-subscription
+smart-keyvault list-vaults --provider hashicorp --instance dev-vault
+
 # List secrets in a vault (one per line)
-AZURE_SUBSCRIPTION_ID=xxx smart-keyvault list-secrets --provider azure --vault my-prod-vault
-smart-keyvault list-secrets --provider hashicorp --vault secret
+smart-keyvault list-secrets --provider azure --vault my-prod-vault
+smart-keyvault list-secrets --provider hashicorp --vault secret --instance local-vault
 
 # Get secret value (outputs to stdout)
-AZURE_SUBSCRIPTION_ID=xxx smart-keyvault get-secret --provider azure --vault my-vault --name my-secret
+smart-keyvault get-secret --provider azure --vault my-vault --name my-secret
 smart-keyvault get-secret --provider hashicorp --vault secret --name database/password
 
 # Get secret and copy to clipboard directly
-AZURE_SUBSCRIPTION_ID=xxx smart-keyvault get-secret --provider azure --vault my-vault --name my-secret --copy
+smart-keyvault get-secret --provider azure --vault my-vault --name my-secret --copy
 smart-keyvault get-secret --provider hashicorp --vault secret --name api-key --copy
 
 # Walk through all secrets and retrieve their values (grouped by vault)
-AZURE_SUBSCRIPTION_ID=xxx smart-keyvault walk-secrets --provider azure
-AZURE_SUBSCRIPTION_ID=xxx smart-keyvault walk-secrets --provider azure --vault my-vault
+smart-keyvault walk-secrets --provider azure
+smart-keyvault walk-secrets --provider azure --vault my-vault --instance dev-subscription
 smart-keyvault walk-secrets --provider hashicorp --vault secret
 
 # JSON output (for scripting/parsing)
-AZURE_SUBSCRIPTION_ID=xxx smart-keyvault list-vaults --provider azure --format json
+smart-keyvault list-vaults --provider azure --format json
 smart-keyvault list-secrets --provider hashicorp --vault secret --format json
-AZURE_SUBSCRIPTION_ID=xxx smart-keyvault walk-secrets --provider azure --format json
+smart-keyvault walk-secrets --provider azure --format json
+
+# Use custom config file
+smart-keyvault list-vaults --provider azure --config /path/to/config.yaml
+
+# Override with environment variables (if no config or instance specified)
+AZURE_SUBSCRIPTION_ID=xxx smart-keyvault list-vaults --provider azure
+VAULT_ADDR=http://localhost:8200 VAULT_TOKEN=xxx smart-keyvault list-vaults --provider hashicorp
 ```
 
 ### HashiCorp Vault Setup Example

@@ -1,0 +1,55 @@
+# Smart KeyVault Configuration Example
+# Copy this file to ~/.config/smart-keyvault/config.yaml and customize
+
+# Default settings for quick access
+defaults:
+  provider: "azure"              # Default provider (azure, hashicorp)
+  vault: "my-prod-vault"         # Default vault name
+
+# Provider configurations
+providers:
+  # Azure KeyVault Provider
+  azure:
+    enabled: true
+    # List of Azure subscriptions
+    instances:
+      - name: "prod-subscription"
+        subscription_id: "xxx-xxx-xxx-prod"
+        default: true
+
+      - name: "dev-subscription"
+        subscription_id: "xxx-xxx-xxx-dev"
+
+      - name: "sandbox-subscription"
+        subscription_id: "${AZURE_SUBSCRIPTION_ID}"  # Can use env vars
+
+  # HashiCorp Vault Provider
+  hashicorp:
+    enabled: true
+    # List of Vault instances
+    instances:
+      - name: "prod-vault"
+        address: "https://vault-prod.example.com:8200"
+        token: "${VAULT_TOKEN_PROD}"      # Environment variable substitution
+        namespace: "admin/production"      # For Vault Enterprise
+        default: true
+
+      - name: "dev-vault"
+        address: "https://vault-dev.example.com:8200"
+        token: "${VAULT_TOKEN_DEV}"
+        namespace: "admin/dev"
+
+      - name: "local-vault"
+        address: "http://127.0.0.1:8200"
+        token: "${VAULT_TOKEN}"
+        # namespace is optional (not needed for Vault OSS)
+
+# fzf-tmux display options
+fzf:
+  height: "40%"
+  border: "rounded"
+  preview: false
+
+# Filtering options
+filters:
+  enabled_only: true  # Only show enabled secrets
