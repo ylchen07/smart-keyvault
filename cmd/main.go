@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/ylchen07/smart-keyvault/internal/azure"
 	"github.com/ylchen07/smart-keyvault/internal/clipboard"
+	"github.com/ylchen07/smart-keyvault/internal/config"
 	"github.com/ylchen07/smart-keyvault/internal/hashicorp"
 	"github.com/ylchen07/smart-keyvault/internal/output"
 	"github.com/ylchen07/smart-keyvault/internal/provider"
@@ -16,16 +17,102 @@ import (
 
 var (
 	providerName string
+	instanceName string // New: instance name for multi-instance providers
 	vaultName    string
 	secretName   string
 	formatType   string
 	copyToClip   bool
+	configPath   string // New: optional config file path
+
+	// Global config loaded once
+	appConfig *config.Config
 )
 
 func init() {
 	// Register providers
 	provider.Register("azure", azure.NewProvider)
 	provider.Register("hashicorp", hashicorp.NewProvider)
+}
+
+// loadConfig loads the application config
+func loadConfig() error {
+	var err error
+
+	if configPath != "" {
+		appConfig, err = config.LoadFromFile(configPath)
+	} else {
+		appConfig, err = config.Load()
+	}
+
+	// If config file not found, create a minimal default config
+	if err != nil {
+		appConfig = &config.Config{
+			Defaults: config.Defaults{},
+			Providers: config.Providers{
+				Azure:     &config.AzureConfig{Enabled: true, Instances: []config.AzureInstance{}},
+				Hashicorp: &config.HashicorpConfig{Enabled: true, Instances: []config.HashicorpInstance{}},
+			},
+			FZF:     config.FZFConfig{Height: "40%", Border: "rounded", Preview: false},
+			Filters: config.Filters{EnabledOnly: true},
+		}
+	}
+
+	return nil
+}
+
+// getProviderConfig creates a provider.Config for the specified provider and instance
+func getProviderConfig(providerName, instanceName string) (*provider.Config, error) {
+	if appConfig == nil {
+		if err := loadConfig(); err != nil {
+			return nil, err
+		}
+	}
+
+	cfg := &provider.Config{
+		Name:     providerName,
+		Settings: make(map[string]interface{}),
+	}
+
+	switch providerName {
+	case "azure":
+		var instance *config.AzureInstance
+		var err error
+
+		if instanceName != "" {
+			instance, err = appConfig.GetAzureInstance(instanceName)
+		} else {
+			instance, err = appConfig.GetDefaultAzureInstance()
+		}
+
+		if err != nil {
+			return nil, fmt.Errorf("failed to get Azure instance: %w", err)
+		}
+
+		cfg.Settings["subscription_id"] = instance.SubscriptionID
+
+	case "hashicorp":
+		var instance *config.HashicorpInstance
+		var err error
+
+		if instanceName != "" {
+			instance, err = appConfig.GetHashicorpInstance(instanceName)
+		} else {
+			instance, err = appConfig.GetDefaultHashicorpInstance()
+		}
+
+		if err != nil {
+			return nil, fmt.Errorf("failed to get Hashicorp instance: %w", err)
+		}
+
+		cfg.Settings["address"] = instance.Address
+		cfg.Settings["token"] = instance.Token
+		cfg.Settings["namespace"] = instance.Namespace
+
+	default:
+		return nil, fmt.Errorf("unknown provider: %s", providerName)
+	}
+
+	return cfg, nil
 }
 
 func main() {
@@ -84,8 +171,19 @@ func listVaultsCmd() *cobra.Command {
 		Use:   "list-vaults",
 		Short: "List all vaults from a provider",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Load config
+			if err := loadConfig(); err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			// Get provider config
+			cfg, err := getProviderConfig(providerName, instanceName)
+			if err != nil {
+				return err
+			}
+
 			// Get provider
-			p, err := provider.GetProvider(providerName, &provider.Config{Name: providerName})
+			p, err := provider.GetProvider(providerName, cfg)
 			if err != nil {
 				return err
 			}
@@ -116,7 +214,9 @@ func listVaultsCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&providerName, "provider", "p", "", "Provider name (azure, hashicorp)")
+	cmd.Flags().StringVarP(&instanceName, "instance", "i", "", "Instance name (optional, uses default if not specified)")
 	cmd.Flags().StringVarP(&formatType, "format", "f", "plain", "Output format (plain, json)")
+	cmd.Flags().StringVar(&configPath, "config", "", "Config file path (optional)")
 	cmd.MarkFlagRequired("provider")
 	return cmd
 }
@@ -127,8 +227,19 @@ func listSecretsCmd() *cobra.Command {
 		Use:   "list-secrets",
 		Short: "List all secrets in a vault",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Load config
+			if err := loadConfig(); err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			// Get provider config
+			cfg, err := getProviderConfig(providerName, instanceName)
+			if err != nil {
+				return err
+			}
+
 			// Get provider
-			p, err := provider.GetProvider(providerName, &provider.Config{Name: providerName})
+			p, err := provider.GetProvider(providerName, cfg)
 			if err != nil {
 				return err
 			}
@@ -159,8 +270,10 @@ func listSecretsCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&providerName, "provider", "p", "", "Provider name (azure, hashicorp)")
+	cmd.Flags().StringVarP(&instanceName, "instance", "i", "", "Instance name (optional, uses default if not specified)")
 	cmd.Flags().StringVarP(&vaultName, "vault", "v", "", "Vault name")
 	cmd.Flags().StringVarP(&formatType, "format", "f", "plain", "Output format (plain, json)")
+	cmd.Flags().StringVar(&configPath, "config", "", "Config file path (optional)")
 	cmd.MarkFlagRequired("provider")
 	cmd.MarkFlagRequired("vault")
 	return cmd
@@ -172,8 +285,19 @@ func getSecretCmd() *cobra.Command {
 		Use:   "get-secret",
 		Short: "Get a secret value",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Load config
+			if err := loadConfig(); err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			// Get provider config
+			cfg, err := getProviderConfig(providerName, instanceName)
+			if err != nil {
+				return err
+			}
+
 			// Get provider
-			p, err := provider.GetProvider(providerName, &provider.Config{Name: providerName})
+			p, err := provider.GetProvider(providerName, cfg)
 			if err != nil {
 				return err
 			}
@@ -201,9 +325,11 @@ func getSecretCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&providerName, "provider", "p", "", "Provider name (azure, hashicorp)")
+	cmd.Flags().StringVarP(&instanceName, "instance", "i", "", "Instance name (optional, uses default if not specified)")
 	cmd.Flags().StringVarP(&vaultName, "vault", "v", "", "Vault name")
 	cmd.Flags().StringVarP(&secretName, "name", "n", "", "Secret name")
 	cmd.Flags().BoolVarP(&copyToClip, "copy", "c", false, "Copy secret to clipboard")
+	cmd.Flags().StringVar(&configPath, "config", "", "Config file path (optional)")
 	cmd.MarkFlagRequired("provider")
 	cmd.MarkFlagRequired("vault")
 	cmd.MarkFlagRequired("name")
@@ -217,8 +343,19 @@ func walkSecretsCmd() *cobra.Command {
 		Short: "Walk through all secrets in vaults and retrieve their values",
 		Long:  `Walk through all accessible vaults (or a specific vault) and retrieve all secret values, outputting them in a structured format grouped by vault.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Load config
+			if err := loadConfig(); err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			// Get provider config
+			cfg, err := getProviderConfig(providerName, instanceName)
+			if err != nil {
+				return err
+			}
+
 			// Get provider
-			p, err := provider.GetProvider(providerName, &provider.Config{Name: providerName})
+			p, err := provider.GetProvider(providerName, cfg)
 			if err != nil {
 				return err
 			}
@@ -283,8 +420,10 @@ func walkSecretsCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&providerName, "provider", "p", "", "Provider name (azure, hashicorp)")
+	cmd.Flags().StringVarP(&instanceName, "instance", "i", "", "Instance name (optional, uses default if not specified)")
 	cmd.Flags().StringVarP(&vaultName, "vault", "v", "", "Vault name (optional - if not specified, walks all vaults)")
 	cmd.Flags().StringVarP(&formatType, "format", "f", "json", "Output format (plain, json)")
+	cmd.Flags().StringVar(&configPath, "config", "", "Config file path (optional)")
 	cmd.MarkFlagRequired("provider")
 	return cmd
 }

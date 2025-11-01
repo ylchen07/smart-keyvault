@@ -15,8 +15,27 @@ type Provider struct {
 }
 
 // NewProvider creates a new HashiCorp Vault provider
+// Configuration options:
+//   - "address" (string): Vault server address
+//   - "token" (string): Vault authentication token
+//   - "namespace" (string): Vault namespace (optional, for Enterprise)
 func NewProvider(cfg *provider.Config) (provider.Provider, error) {
-	client, err := NewClient()
+	var address, token, namespace string
+
+	// Try to get config from Settings
+	if cfg != nil && cfg.Settings != nil {
+		if v, ok := cfg.Settings["address"].(string); ok {
+			address = v
+		}
+		if v, ok := cfg.Settings["token"].(string); ok {
+			token = v
+		}
+		if v, ok := cfg.Settings["namespace"].(string); ok {
+			namespace = v
+		}
+	}
+
+	client, err := NewClient(address, token, namespace)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Vault client: %w", err)
 	}

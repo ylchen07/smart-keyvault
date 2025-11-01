@@ -14,17 +14,27 @@ type Client struct {
 }
 
 // NewClient creates a new HashiCorp Vault client
-// It reads configuration from standard Vault environment variables:
-// - VAULT_ADDR: Vault server address (required)
-// - VAULT_TOKEN: Authentication token (required)
-// - VAULT_NAMESPACE: Vault namespace (optional, required for Vault Enterprise)
-func NewClient() (*Client, error) {
+// Parameters:
+// - address: Vault server address (if empty, reads from VAULT_ADDR env var)
+// - token: Authentication token (if empty, reads from VAULT_TOKEN env var)
+// - namespace: Vault namespace (if empty, reads from VAULT_NAMESPACE env var, optional)
+func NewClient(address, token, namespace string) (*Client, error) {
 	// Create default config (reads from VAULT_ADDR, VAULT_CACERT, etc.)
 	config := vault.DefaultConfig()
 
-	// Check if VAULT_ADDR is set
+	// Override address if provided
+	if address != "" {
+		config.Address = address
+	}
+
+	// Fallback to environment variable
 	if config.Address == "" {
-		return nil, fmt.Errorf("VAULT_ADDR environment variable not set")
+		config.Address = os.Getenv("VAULT_ADDR")
+	}
+
+	// Check if address is set
+	if config.Address == "" {
+		return nil, fmt.Errorf("vault address not set (provide via config or VAULT_ADDR env var)")
 	}
 
 	// Create client
@@ -33,15 +43,19 @@ func NewClient() (*Client, error) {
 		return nil, fmt.Errorf("failed to create Vault client: %w", err)
 	}
 
-	// Set token from environment
-	token := os.Getenv("VAULT_TOKEN")
+	// Set token
 	if token == "" {
-		return nil, fmt.Errorf("VAULT_TOKEN environment variable not set")
+		token = os.Getenv("VAULT_TOKEN")
+	}
+	if token == "" {
+		return nil, fmt.Errorf("vault token not set (provide via config or VAULT_TOKEN env var)")
 	}
 	client.SetToken(token)
 
-	// Set namespace if provided (required for Vault Enterprise)
-	namespace := os.Getenv("VAULT_NAMESPACE")
+	// Set namespace if provided
+	if namespace == "" {
+		namespace = os.Getenv("VAULT_NAMESPACE")
+	}
 	if namespace != "" {
 		client.SetNamespace(namespace)
 	}
