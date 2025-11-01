@@ -1,18 +1,18 @@
 # Quick Start Guide
 
-This guide will help you get started with Smart KeyVault.
+Get started with Smart KeyVault in minutes.
 
 ## Prerequisites
 
-Make sure you have the following installed:
 - Go 1.21+
 - fzf
-- tmux with TPM
-- Azure CLI (`az`) - for Azure KeyVault provider
+- tmux with TPM (Tmux Plugin Manager)
+- Azure CLI (`az`) - for Azure KeyVault
+- HashiCorp Vault - for Vault provider (optional)
 
 ## Installation
 
-### 1. Clone and Build
+### 1. Build from Source
 
 ```bash
 git clone https://github.com/ylchen07/smart-keyvault.git
@@ -23,153 +23,181 @@ make build
 ### 2. Test the Binary
 
 ```bash
-# List available providers
+# List providers
 ./bin/smart-keyvault list-providers
 
-# List vaults (requires az login)
-./bin/smart-keyvault list-vaults --provider azure
+# List vaults (requires authentication)
+AZURE_SUBSCRIPTION_ID=xxx ./bin/smart-keyvault list-vaults --provider azure
 
-# List secrets in a vault
-./bin/smart-keyvault list-secrets --provider azure --vault <vault-name>
-
-# Get a secret (copy to clipboard)
+# Get a secret
 ./bin/smart-keyvault get-secret --provider azure --vault <vault-name> --name <secret-name> --copy
 ```
 
 ### 3. Install as Tmux Plugin
 
-Add to your `~/.tmux.conf`:
+Add to `~/.tmux.conf`:
 
 ```bash
 set -g @plugin 'ylchen07/smart-keyvault'
 ```
 
-Then reload tmux:
-- Press `prefix + I` to install the plugin (TPM)
-- Or manually: `tmux source-file ~/.tmux.conf`
+Reload tmux:
+- Press `prefix + I` to install (TPM)
+- Or: `tmux source-file ~/.tmux.conf`
 
-### 4. Configure (Optional)
+## Configuration
 
-In your `~/.tmux.conf`, you can customize keybindings:
+### Option 1: Environment Variables Only
 
 ```bash
-# Custom keybindings (optional)
-set -g @smart-keyvault-key 'K'           # Default: K
-set -g @smart-keyvault-quick-key 'k'     # Default: k
+# Azure
+export AZURE_SUBSCRIPTION_ID="xxx-xxx-xxx"
 
-# fzf-tmux options (optional)
-set -g @smart-keyvault-fzf-height '60%'  # Default: 60%
-set -g @smart-keyvault-fzf-width '80%'   # Default: 80%
+# HashiCorp Vault
+export VAULT_ADDR="https://vault.example.com:8200"
+export VAULT_TOKEN="your-token"
+export VAULT_NAMESPACE="admin/production"  # For Vault Enterprise
+```
+
+### Option 2: Config File (Recommended)
+
+Create `~/.config/smart-keyvault/config.yaml`:
+
+```yaml
+defaults:
+  provider: "azure"
+
+providers:
+  azure:
+    enabled: true
+    instances:
+      - name: "prod"
+        subscription_id: "${AZURE_SUBSCRIPTION_ID}"
+        default: true
+
+      - name: "dev"
+        subscription_id: "yyy-yyy-yyy"
+
+  hashicorp:
+    enabled: true
+    instances:
+      - name: "prod-vault"
+        address: "https://vault-prod.example.com:8200"
+        token: "${VAULT_TOKEN_PROD}"
+        namespace: "admin/production"
+        default: true
+
+      - name: "local"
+        address: "http://127.0.0.1:8200"
+        token: "${VAULT_TOKEN}"
+
+fzf:
+  height: "40%"
+  border: "rounded"
+```
+
+Copy example config:
+```bash
+mkdir -p ~/.config/smart-keyvault
+cp config.example.yaml ~/.config/smart-keyvault/config.yaml
+# Edit and add your instances
 ```
 
 ## Usage
 
-### Using the Tmux Plugin
+### Tmux Plugin
 
-1. Press `prefix + K` (default) in tmux
-2. Select provider (if multiple available)
-3. Select vault from the list
-4. Select secret from the list
-5. Secret is automatically copied to clipboard!
+Press `prefix + K` in tmux:
+1. Select provider (if multiple)
+2. Select vault
+3. Select secret
+4. Secret copied to clipboard!
 
-### Using the CLI Directly
+### CLI Direct Usage
 
 ```bash
-# List all providers
+# List providers
 smart-keyvault list-providers
 
-# List vaults
+# List vaults (uses default instance from config)
 smart-keyvault list-vaults --provider azure
+
+# List vaults from specific instance
+smart-keyvault list-vaults --provider azure --instance dev
 
 # List secrets
 smart-keyvault list-secrets --provider azure --vault my-vault
 
-# Get secret value (output to stdout)
+# Get secret (output to stdout)
 smart-keyvault get-secret --provider azure --vault my-vault --name my-secret
 
 # Get secret and copy to clipboard
 smart-keyvault get-secret --provider azure --vault my-vault --name my-secret --copy
 
-# JSON output (for scripting)
+# JSON output for scripting
 smart-keyvault list-vaults --provider azure --format json
 ```
 
 ## Azure Setup
 
-1. **Install Azure CLI**:
-   ```bash
-   # macOS
-   brew install azure-cli
+```bash
+# Install Azure CLI
+brew install azure-cli  # macOS
+# or
+curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash  # Linux
 
-   # Linux (Debian/Ubuntu)
-   curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-   ```
+# Login
+az login
 
-2. **Login to Azure**:
-   ```bash
-   az login
-   ```
+# Set subscription (if needed)
+az account set --subscription <subscription-id>
 
-3. **Verify access to KeyVaults**:
-   ```bash
-   az keyvault list
-   ```
+# Verify access
+az keyvault list
+```
 
-## Hashicorp Vault Setup (Coming Soon)
+## HashiCorp Vault Setup
 
-The Hashicorp Vault provider is planned but not yet implemented. To add support:
+```bash
+# Set environment variables
+export VAULT_ADDR='https://vault.example.com:8200'
+export VAULT_TOKEN='your-token'
+export VAULT_NAMESPACE='admin/production'  # For Vault Enterprise
 
-1. Implement `internal/vault/provider.go`
-2. Register in `cmd/smart-keyvault/main.go`
-3. Set environment variables:
-   ```bash
-   export VAULT_ADDR="https://vault.example.com"
-   export VAULT_TOKEN="your-token"
-   ```
+# Test connection
+smart-keyvault list-vaults --provider hashicorp
+```
 
 ## Troubleshooting
 
 ### Binary not found
 ```bash
-# Make sure binary is built
-make build
-
-# Or install to PATH
-make install
+make build && make install
 ```
 
-### Azure CLI errors
+### Azure authentication error
 ```bash
-# Make sure you're logged in
 az login
-
-# Check your subscriptions
-az account list
-
-# Set default subscription if needed
 az account set --subscription <subscription-id>
+```
+
+### Vault connection error
+```bash
+# Check environment variables
+echo $VAULT_ADDR
+echo $VAULT_TOKEN
+
+# Test vault connection
+vault status
 ```
 
 ### fzf not found
 ```bash
-# macOS
-brew install fzf
-
-# Linux (Debian/Ubuntu)
-sudo apt-get install fzf
-
-# Or from source
-git clone --depth 1 https://github.com/junegunn/fzf.git ~/.fzf
-~/.fzf/install
+brew install fzf  # macOS
+sudo apt-get install fzf  # Linux
 ```
 
-### Clipboard not working
-The clipboard functionality uses the system clipboard:
-- **Linux**: Requires `xclip` or `xsel`
-- **macOS**: Works out of the box
-- **Windows**: Works with WSL
-
-Install clipboard tools on Linux:
+### Clipboard not working (Linux)
 ```bash
 sudo apt-get install xclip  # or xsel
 ```
@@ -177,17 +205,15 @@ sudo apt-get install xclip  # or xsel
 ## Next Steps
 
 - Read [ARCHITECTURE.md](ARCHITECTURE.md) for technical details
-- Read [DESIGN_DECISIONS.md](DESIGN_DECISIONS.md) for architectural rationale
-- Check [README.md](README.md) for full documentation
+- Read [DESIGN_DECISIONS.md](DESIGN_DECISIONS.md) for rationale
+- See [README.md](README.md) for full documentation
+- Check `config.example.yaml` for all config options
 
-## Contributing
+## Custom Keybindings
 
-Contributions are welcome! Areas to contribute:
-1. Implement Hashicorp Vault provider (`internal/vault/`)
-2. Add AWS Secrets Manager provider
-3. Add GCP Secret Manager provider
-4. Improve error messages
-5. Add tests
-6. Improve documentation
+In `~/.tmux.conf`:
 
-See the provider interface in `internal/provider/provider.go` for implementation guidance.
+```bash
+set -g @smart-keyvault-key 'C-k'    # Ctrl+k instead of prefix+K
+set -g @smart-keyvault-fzf-height '50%'
+```

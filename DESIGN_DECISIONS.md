@@ -1,20 +1,12 @@
 # Design Decisions
 
-This document outlines key architectural decisions for the Smart KeyVault project.
+Key architectural decisions for Smart KeyVault.
 
 ## Multi-Provider Architecture
 
-### Decision: Provider Interface Pattern
+### Provider Interface Pattern
 
-**Why**: To support multiple secret management backends (Azure KeyVault, Hashicorp Vault, and future providers) with a unified interface.
-
-**Benefits**:
-- **Extensibility**: Easy to add new providers (AWS Secrets Manager, GCP Secret Manager, etc.)
-- **Consistency**: All providers implement the same interface
-- **Testing**: Easy to mock providers for testing
-- **Separation of Concerns**: Each provider is self-contained
-
-### Provider Interface
+**Why**: Support multiple secret management backends with a unified interface.
 
 ```go
 type Provider interface {
@@ -26,273 +18,205 @@ type Provider interface {
 }
 ```
 
-### Provider Registry Pattern
-
-**Why**: Allows dynamic provider registration and instantiation.
-
 **Benefits**:
-- Providers can self-register at init time
-- Factory pattern for creating provider instances
-- Easy to enable/disable providers via configuration
+- Easy to add new providers (AWS, GCP, etc.)
+- Consistent interface across all providers
+- Mockable for testing
+- Self-contained provider implementations
+
+### Provider Registry
+
+Providers self-register at init time:
 
 ```go
 func init() {
     provider.Register("azure", azure.NewProvider)
-    provider.Register("hashicorp", vault.NewProvider)
+    provider.Register("hashicorp", hashicorp.NewProvider)
 }
 ```
 
-## Clipboard Integration
+## Configuration System
 
-### Decision: Direct Clipboard Integration in Go Binary
+### Viper-Based Multi-Instance Config
 
-**Why**: Using `gopasspw/clipboard` library for direct clipboard operations.
+**Why**: Users need to manage multiple Azure subscriptions and Vault servers.
 
-**Benefits**:
-- **Cross-platform**: Works on Linux, macOS, Windows
-- **No shell dependency**: Don't need to rely on `xclip`, `pbcopy`, etc.
-- **Cleaner UX**: Single command copies secret directly
-- **Tmux-independent**: Works outside tmux as well
+**Features**:
+- Config file at `~/.config/smart-keyvault/config.yaml`
+- Environment variable substitution (`${VAR}` pattern)
+- Multiple instances per provider
+- Default instances to skip selection prompts
 
-**Usage**:
-```bash
-# Binary handles clipboard directly
-smart-keyvault get-secret --provider azure --vault X --name Y --copy
+**Config Structure**:
+```yaml
+defaults:
+  provider: "azure"
+
+providers:
+  azure:
+    instances:
+      - name: "prod"
+        subscription_id: "${AZURE_SUBSCRIPTION_ID}"
+        default: true
+
+  hashicorp:
+    instances:
+      - name: "prod-vault"
+        address: "https://vault.example.com"
+        token: "${VAULT_TOKEN}"
 ```
 
-## Separation: Go Binary vs Shell Scripts
+**Precedence**: CLI flags > Env vars > Config file > Defaults
 
-### Decision: Keep UI/Orchestration in Shell, Data in Go
+## Azure Provider: SDK vs CLI
 
-**Go Binary Responsibilities**:
-- Execute provider operations (list vaults, secrets, get secret)
-- Parse responses and format output
-- Handle clipboard operations
-- Output plain text (for fzf) or JSON (for scripting)
-
-**Shell Script Responsibilities**:
-- Tmux keybinding management
-- fzf-tmux UI presentation
-- Workflow orchestration (provider → vault → secret selection)
-- User feedback messages
-
-**Benefits**:
-- **Simplicity**: Shell is great for orchestration and UI
-- **Performance**: Go is fast for data fetching
-- **Portability**: Go binary works standalone (can be used outside tmux)
-- **Testability**: Easy to test Go binary independently
-
-## Azure Provider: CLI Wrapper vs SDK
-
-### Decision: Use Azure CLI (`az`) instead of Azure SDK
+### Decision: Use Azure SDK for Go
 
 **Why**:
-- Simpler authentication (relies on `az login`)
-- No need to manage credentials in code
-- Respects user's existing Azure authentication
-- Smaller binary size (no SDK dependencies)
-- Users already have `az` installed
+- Native Go integration, no subprocess spawning
+- Better performance and error handling
+- Thread-safe client caching
+- Connection pooling and reuse
 
-**Trade-offs**:
-- Slightly slower (subprocess execution)
-- Depends on `az` being installed
-- Limited by CLI capabilities
-
-**Accepted because**: This is a developer tool, users already have `az` CLI.
+**Authentication**: `DefaultAzureCredential` supports:
+- Azure CLI (`az login`)
+- Managed Identity
+- Environment variables
+- Service Principal
 
 ## Hashicorp Vault Provider: API SDK
 
-### Decision: Use Hashicorp Vault API SDK
+**Why**: No official CLI, SDK provides native Go integration.
 
-**Why**:
-- No official Vault CLI with structured output
-- SDK provides native Go integration
-- Better performance (direct API calls)
-- More features available
+**Authentication**: Environment variables (`VAULT_ADDR`, `VAULT_TOKEN`, `VAULT_NAMESPACE`)
 
-**Authentication**:
-- Reads from `VAULT_ADDR` and `VAULT_TOKEN` environment variables
-- Can be extended to support other auth methods (AppRole, Kubernetes, etc.)
+**Supports**: KV v2 secret engines only
+
+## Clipboard Integration
+
+### Direct Clipboard in Go Binary
+
+**Why**: Using `gopasspw/clipboard` for direct integration.
+
+**Benefits**:
+- Cross-platform (Linux, macOS, Windows)
+- No shell dependency (xclip, pbcopy)
+- Works outside tmux too
+
+**Usage**:
+```bash
+smart-keyvault get-secret --provider azure --vault X --name Y --copy
+```
+
+## Architecture Separation
+
+### Go Binary vs Shell Scripts
+
+**Go Binary**:
+- Data fetching from providers
+- Config loading and instance selection
+- Clipboard operations
+- Output formatting (plain/JSON)
+
+**Shell Scripts**:
+- Tmux keybinding management
+- fzf-tmux UI orchestration
+- Workflow coordination
+- User feedback messages
+
+**Benefits**: Simple separation, Go handles data, shell handles UI
 
 ## Data Models
 
-### Decision: Minimal, Provider-Agnostic Models
-
-**Why**: Different providers have different metadata, we only need common fields.
+### Minimal, Provider-Agnostic Models
 
 ```go
 type Vault struct {
-    Name     string            // Common across all providers
-    Provider string            // Which provider this vault belongs to
+    Name     string
+    Provider string
     Metadata map[string]string // Provider-specific fields
 }
 ```
 
-**Benefits**:
-- Extensible: Metadata map holds provider-specific data
-- Consistent: All providers return same structure
-- Minimal: Only essential fields
+**Why**: Different providers have different metadata, only store common fields + extensible metadata map.
 
 ## Output Formatting
 
-### Decision: Two Output Modes (Plain Text + JSON)
-
-**Plain Text**:
+**Plain Text** (default):
 - One item per line
 - For piping to fzf
 - Human-readable
 
-**JSON**:
+**JSON** (`--format json`):
 - Structured data
 - For scripting/automation
 - Machine-readable
 
-**Example**:
-```bash
-# Plain (default for fzf)
-$ smart-keyvault list-vaults --provider azure
-my-prod-vault
-my-dev-vault
-
-# JSON (for scripts)
-$ smart-keyvault list-vaults --provider azure --format json
-[
-  {"name": "my-prod-vault", "provider": "azure", "metadata": {...}},
-  {"name": "my-dev-vault", "provider": "azure", "metadata": {...}}
-]
-```
-
-## Configuration Strategy
-
-### Decision: Minimal Configuration, Environment-Based
-
-**Why**: Keep it simple, rely on existing tool configurations.
-
-**Azure**:
-- Uses `az` CLI's existing authentication
-- No additional config needed
-
-**Hashicorp Vault**:
-- Uses `VAULT_ADDR` and `VAULT_TOKEN` environment variables
-- Standard Vault client configuration
-
-**Optional Config** (future):
-```yaml
-# ~/.config/smart-keyvault/config.yaml
-providers:
-  azure:
-    enabled: true
-    default: true
-  hashicorp:
-    enabled: true
-    address: "https://vault.example.com"
-```
-
 ## Error Handling
 
-### Decision: Fail Fast, Clear Messages
-
 **Principles**:
-- Write errors to stderr
-- Exit with non-zero code on error
-- Provide actionable error messages
-- Parse provider errors and simplify
+- Fail fast with clear messages
+- Errors to stderr, data to stdout
+- Non-zero exit codes on error
+- Actionable error messages
 
 **Examples**:
 ```
-Error: Not logged in to Azure. Run 'az login'
-Error: Vault 'my-vault' not found
-Error: No VAULT_TOKEN set. Export VAULT_TOKEN environment variable
+Error: subscription_id required (set via config or AZURE_SUBSCRIPTION_ID)
+Error: vault token not set (provide via config or VAULT_TOKEN)
+Error: vault 'my-vault' not found
 ```
 
-## Future Extensibility
+## Security
 
-### Easy to Add New Providers
+**Secret Handling**:
+- Secrets only to stdout or clipboard
+- No secrets in logs or disk
+- No secrets in shell history
 
-To add a new provider (e.g., AWS Secrets Manager):
+**Authentication**:
+- No credential storage in code
+- Rely on provider native auth
+- Config file supports `${VAR}` for sensitive data
+
+**Clipboard**:
+- Secret persists until next copy/paste
+- Could add auto-clear timeout (future)
+
+## Extensibility
+
+### Adding New Providers
+
+Three steps to add a new provider (e.g., AWS):
 
 1. Create `internal/aws/provider.go` implementing `Provider` interface
-2. Register in `main.go`: `provider.Register("aws", aws.NewProvider)`
+2. Register: `provider.Register("aws", aws.NewProvider)`
 3. Update docs
 
-That's it! No changes needed to:
-- CLI commands
-- Shell scripts
-- Output formatters
-- Data models
+No changes needed to CLI, shell scripts, formatters, or models.
 
 ### Feature Flags
 
-Providers can declare supported features:
+Providers declare supported features:
 
 ```go
-func (p *AzureProvider) SupportsFeature(feature provider.Feature) bool {
+func (p *Provider) SupportsFeature(feature provider.Feature) bool {
     switch feature {
-    case provider.FeatureVersioning:
-        return true  // Azure supports secret versioning
-    case provider.FeatureTags:
-        return true  // Azure supports tags
-    default:
-        return false
+    case provider.FeatureVersioning: return true  // Azure supports versioning
+    case provider.FeatureTags:       return true  // Azure supports tags
+    default:                         return false
     }
 }
 ```
 
-Future UI can adapt based on features (e.g., show version selection if supported).
-
-## Security Considerations
-
-### Secret Handling
-- Secrets only printed to stdout or clipboard
-- No secrets in logs
-- No secrets written to disk
-- No secrets in command history (avoid echo)
-
-### Authentication
-- No credential storage in code
-- Rely on provider's native auth (az CLI, Vault tokens)
-- Respect environment variables and provider configs
-
-### Clipboard
-- Secret stays in clipboard until user pastes or copies something else
-- Could add auto-clear in future (configurable timeout)
-
-## Testing Strategy
-
-### Unit Tests
-- Mock provider interface for testing
-- Test each provider implementation with mock backends
-- Test output formatters
-
-### Integration Tests
-- Real provider tests (with test accounts)
-- Tag with build flags: `go test -tags=integration`
-
-### Manual Testing
-- Test with real Azure KeyVault
-- Test with real Hashicorp Vault
-- Test tmux plugin workflow end-to-end
-
-## Performance Considerations
-
-### No Caching (Initially)
-- Keep it simple
-- Providers are already fast enough
-- Can add caching later if needed
-
-### Concurrent Requests (Future)
-- Could fetch secrets concurrently when listing
-- Use goroutines with worker pools
-- Implement when needed for large vaults
+UI can adapt based on features (e.g., show version selection if supported).
 
 ## Summary
 
-The architecture is designed to be:
-- **Simple**: Easy to understand and maintain
-- **Extensible**: Easy to add new providers
-- **Practical**: Uses existing tools (az CLI, Vault SDK)
-- **User-friendly**: Direct clipboard integration, clear errors
-- **Testable**: Provider interface allows mocking
+Core principles:
+- **Simple**: Clear separation of concerns
+- **Extensible**: Provider pattern enables easy additions
+- **Practical**: Use existing tools and native SDKs
+- **User-friendly**: Config file, clipboard integration, clear errors
 - **Secure**: No credential storage, respects provider auth
-
-The provider pattern is the key architectural decision that enables all of these benefits.
+- **Fast**: Native Go SDKs, client caching, no subprocess overhead
