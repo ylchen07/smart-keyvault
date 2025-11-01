@@ -12,17 +12,17 @@ GOCACHE=$(CACHE_DIR)/go-build
 # Go parameters
 GOCMD=go
 GOBUILD=GOMODCACHE=$(GOMODCACHE) GOCACHE=$(GOCACHE) $(GOCMD) build
-GOCLEAN=$(GOCMD) clean
+GOCLEAN=GOMODCACHE=$(GOMODCACHE) GOCACHE=$(GOCACHE) $(GOCMD) clean -cache -modcache
 GOTEST=GOMODCACHE=$(GOMODCACHE) GOCACHE=$(GOCACHE) $(GOCMD) test
 GOGET=GOMODCACHE=$(GOMODCACHE) GOCACHE=$(GOCACHE) $(GOCMD) get
-GOFMT=$(GOCMD) fmt
+GOFMT=GOMODCACHE=$(GOMODCACHE) GOCACHE=$(GOCACHE) $(GOCMD) fmt
 GOVET=GOMODCACHE=$(GOMODCACHE) GOCACHE=$(GOCACHE) $(GOCMD) vet
 
 # Build the project
 build:
 	@echo "Building $(BINARY)..."
 	@mkdir -p $(BUILD_DIR)
-	$(GOBUILD) -o $(BUILD_DIR)/$(BINARY) ./cmd/$(BINARY)
+	$(GOBUILD) -o $(BUILD_DIR)/$(BINARY) ./cmd
 	@echo "Build complete: $(BUILD_DIR)/$(BINARY)"
 
 # Install the binary to $GOPATH/bin or $HOME/.local/bin
@@ -41,7 +41,6 @@ install: build
 clean:
 	@echo "Cleaning..."
 	$(GOCLEAN)
-	rm -rf $(BUILD_DIR)
 	rm -rf $(CACHE_DIR)
 	@echo "Clean complete"
 
